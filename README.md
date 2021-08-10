@@ -25,7 +25,7 @@ Follow below steps to run the AVClient against a known UUID.
 
 ```
 source .env
-./AVAPIs_Client "UUID"
+./AVAPIs_Client -g "UUID" -u "userid" -p "password"
 ```
 
 # Generate playable output

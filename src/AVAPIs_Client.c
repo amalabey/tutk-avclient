@@ -1,3 +1,4 @@
+# include <argp.h>
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
@@ -26,10 +27,19 @@
 
 #define AUDIO_SPEAKER_CHANNEL 5
 
-// *** AV server ID and password, set here ***
-char avID[]="admin";
-char avPass[]="8888888";
-
+// **** CLI argument parsing ***
+struct arguments 
+{
+	char *userid;
+	char *password;
+	char *uuid;
+};
+static struct argp_option options[] = {
+	{ "userId", 'u', "userid", 0, "User id"},
+	{ "password", 'p', "password", 0, "Password"},
+	{ "uuid", 'g', "uuid", 0, "UUID of the camera"},
+	{ 0 }
+};
 
 void PrintErrHandling (int nErr)
 {
@@ -587,14 +597,14 @@ int start_ipcam_stream(int avIndex)
 	return 1;
 }
 
-
 struct timeval tv;
 
-void *thread_ConnectCCR(void *arg)
+void *thread_ConnectCCR(void *args)
 {
 	int ret;
 	int SID;
-	char *UID=(char *)arg;
+	
+	struct arguments *arguments = (struct arguments *)args;
 	int tmpSID = IOTC_Get_SessionID();
 	printf("  [] thread_ConnectCCR::IOTC_Get_SessionID, ret=[%d]\n", tmpSID);
 	if(tmpSID < 0)
@@ -604,7 +614,7 @@ void *thread_ConnectCCR(void *arg)
 	}
 
 	//SID = IOTC_Connect_ByUID(UID);
-	SID = IOTC_Connect_ByUID_Parallel(UID, tmpSID);
+	SID = IOTC_Connect_ByUID_Parallel(arguments->uuid, tmpSID);
 	printf("  [] thread_ConnectCCR::IOTC_Connect_ByUID_Parallel, ret=[%d]\n", SID);
 	if(SID < 0)
 	{
@@ -622,7 +632,7 @@ void *thread_ConnectCCR(void *arg)
 	}
 	printf("SID[%d] Cost time = %ld sec, %ld ms\n", SID, sec, usec);
 
-	printf("Step 2: call IOTC_Connect_ByUID(%s) ret(%d).......\n", UID, SID);
+	printf("Step 2: call IOTC_Connect_ByUID(%s) ret(%d).......\n", arguments->uuid, SID);
 	struct st_SInfo Sinfo;
 	memset(&Sinfo, 0, sizeof(struct st_SInfo));
 	
@@ -630,7 +640,7 @@ void *thread_ConnectCCR(void *arg)
 
 	int nResend=-1;
 	unsigned long srvType;
-	int avIndex = avClientStart2(SID, avID, avPass, 20, &srvType, 0, &nResend);
+	int avIndex = avClientStart2(SID, arguments->userid, arguments->password, 20, &srvType, 0, &nResend);
 	printf("Step 2: call avClientStart2(%d).......\n", avIndex);
 	if(avIndex < 0)
 	{
@@ -689,32 +699,31 @@ void *thread_ConnectCCR(void *arg)
 	return NULL;
 }
 
+static error_t parse_opt(int key, char *arg, struct argp_state *state)
+{
+	struct arguments *arguments = state->input;
+	
+	switch (key)
+	{
+	case 'u': arguments->userid = arg; break;
+	case 'p': arguments->password = arg; break;
+	case 'g': arguments->uuid = arg; break;
+	default:break;
+	}
+
+	return 0;
+}
+
+static struct argp argp = { options, parse_opt, NULL, NULL, 0, 0, 0 };
 
 int main(int argc, char *argv[])
 {
 	srand(time(NULL));
-
 	int ret;
+	
+	struct arguments arguments;
+	argp_parse(&argp, argc, argv, 0, 0, &arguments);
 
-	char *UID[4];
-	int nNumUID;
-	int j=0;
-
-	if(argc < 2 || argc > 5)
-	{
-		printf("Argument Error!!!\n");
-		printf("Usage: ./AVAPIs_Client UID1 [UID2 UID3 UID4]\n");
-		return -1;
-	}
-	else
-	{
-		nNumUID = argc-1;
-		for (j=0; j<nNumUID; j++)
-			UID[j] = argv[j+1];
-	}
-
-
-	//char *UID = argv[1];
 	//struct timeval tv, tv2;
 	gettimeofday(&tv, NULL);
 	ret = IOTC_Initialize2(0);
@@ -755,21 +764,14 @@ int main(int argc, char *argv[])
 	}
 	printf("LAN search done...\n");
 
-	pthread_t ConnectThread_ID[4];
-	for(j=0; j<nNumUID; j++)
+	pthread_t ConnectThread_ID;
+	if((ret = pthread_create(&ConnectThread_ID, NULL, &thread_ConnectCCR, (void *) &arguments)))
 	{
-
-		if((ret = pthread_create(&ConnectThread_ID[j], NULL, &thread_ConnectCCR, (void *)UID[j])))
-		{
-			printf("pthread_create(ConnectThread_ID), ret=[%d]\n", ret);
-			exit(-1);
-		}
+		printf("pthread_create(ConnectThread_ID), ret=[%d]\n", ret);
+		exit(-1);
 	}
 
-	for(j=0; j<nNumUID; j++)
-	{
-		pthread_join(ConnectThread_ID[j], NULL);
-	}
+	pthread_join(ConnectThread_ID, NULL);
 
 	avDeInitialize();
 	IOTC_DeInitialize();
